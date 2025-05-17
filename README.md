@@ -14,7 +14,7 @@
 * **Inference Time Budget**: Model inference must be under **66 ms** (≈15 FPS) to allow time for preprocessing and warning transmission.
 * **Goal**: Develop a real-time vision-based system that detects nearby hazards, analyzes risk, and delivers vibration and audio warnings to visually impaired users.
 
-## Trainin
+## Training
 
 Soon to be updated (by Hoyeon)
 
