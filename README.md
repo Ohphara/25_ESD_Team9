@@ -16,8 +16,84 @@
 
 ## Training
 
-Soon to be updated (by Hoyeon)
+We trained a YOLOv11n model on the AIHub Road Obstacle Dataset to detect various real-world obstacles in outdoor environments.
 
+### 1. Dataset
+
+- **Source**: [AIHub Obstacle Detection Dataset](https://aihub.or.kr/aihubdata/data/view.do?currMenu=115&topMenu=100&aihubDataSe=realm&dataSetSn=189)
+- Includes annotated images of various road conditions and obstacles
+- Converted to YOLO format using custom preprocessing scripts
+
+### 2. Model and Framework
+
+- **Base Model**: YOLOv11n (Ultralytics latest)
+- **Training Framework**: [Ultralytics `ultralytics` Python package](https://docs.ultralytics.com)
+- **Environment**: Google Colab (GPU enabled)
+- **Transfer Learning**: Fine-tuned from pretrained checkpoint `final_best3.pt`
+
+### 3. Training Configuration
+
+| Parameter         | Value              |
+|------------------|--------------------|
+| Epochs           | 30                 |
+| Learning Rate    | 0.001              |
+| Batch Size       | Default (Auto)     |
+| Image Size       | 640x640 (default)  |
+| Dataset YAML     | `yolodata/data.yaml` |
+| Optimizer        | Default (SGD/Adam) |
+
+> All other hyperparameters were left as default values used in the Ultralytics training loop.
+
+### 4. Training Script
+
+Training was performed on Google Colab using the following script:
+
+```python
+from ultralytics import YOLO
+import shutil
+
+# Load pretrained YOLOv11n model
+model = YOLO('/content/drive/MyDrive/yolo_models/final_best3.pt')
+
+# Train the model
+model.train(
+    data='yolodata/data.yaml',
+    epochs=30,
+    lr0=0.001
+)
+
+# Backup best weights to Google Drive
+shutil.copy(
+    '/content/runs/detect/train/weights/best.pt',
+    '/content/drive/MyDrive/yolo_models/final_best4.pt'
+)
+###5. Evaluation Results
+The trained model was evaluated on 2,149 validation images with 20,437 total instances.
+
+Metric	Value
+Precision	0.690
+Recall	0.433
+mAP@0.5	0.528
+mAP@0.5:0.95	0.344
+
+✅ Strongly Performing Classes
+Class	mAP@0.5	mAP@0.5:0.95
+car	0.920	0.709
+pole	0.845	0.605
+tree_trunk	0.827	0.518
+person	0.773	0.474
+movable_signage	0.698	0.483
+
+These classes had a sufficient number of samples and distinct features, resulting in strong detection performance.
+
+⚠️ Underperforming Classes
+Class	mAP@0.5	Samples	Notes
+wheelchair	0.037	3	Too few samples
+cat / dog	0.0~0.42	1~4	Rarely present
+parking_meter	0.0	3	Nearly unrecognizable
+chair / bench	~0.4	100~200	Visual ambiguity
+
+Low-performing classes can be improved by data augmentation or considered for class merging or removal depending on deployment goals.
 ## Optimization
 
 We optimize YOLO models on a Raspberry Pi 5 platform using **ONNX** and **NCNN** to meet latency requirements.
