@@ -67,7 +67,7 @@ shutil.copy(
     '/content/runs/detect/train/weights/best.pt',
     '/content/drive/MyDrive/yolo_models/final_best4.pt'
 )
-###5. Evaluation Results
+### 5. Evaluation Results
 The trained model was evaluated on 2,149 validation images with 20,437 total instances.
 
 Metric	Value
