@@ -68,35 +68,43 @@ shutil.copy(
     '/content/drive/MyDrive/yolo_models/final_best4.pt'
 )
 ### 5. Evaluation Results
+
 The trained model was evaluated on 2,149 validation images with 20,437 total instances.
 
-Metric	Value
-Precision	0.690
-Recall	0.433
-mAP@0.5	0.528
-mAP@0.5:0.95	0.344
+| Metric        | Value |
+|---------------|-------|
+| Precision     | 0.690 |
+| Recall        | 0.433 |
+| mAP@0.5       | 0.528 |
+| mAP@0.5:0.95  | 0.344 |
 
-✅ Strongly Performing Classes
-Class	mAP@0.5	mAP@0.5:0.95
-car	0.920	0.709
-pole	0.845	0.605
-tree_trunk	0.827	0.518
-person	0.773	0.474
-movable_signage	0.698	0.483
+---
+
+#### ✅ Strongly Performing Classes
+
+| Class             | mAP@0.5 | mAP@0.5:0.95 |
+|------------------|---------|--------------|
+| car              | 0.920   | 0.709        |
+| pole             | 0.845   | 0.605        |
+| tree_trunk       | 0.827   | 0.518        |
+| person           | 0.773   | 0.474        |
+| movable_signage  | 0.698   | 0.483        |
 
 These classes had a sufficient number of samples and distinct features, resulting in strong detection performance.
 
-⚠️ Underperforming Classes
-Class	mAP@0.5	Samples	Notes
-wheelchair	0.037	3	Too few samples
-cat / dog	0.0~0.42	1~4	Rarely present
-parking_meter	0.0	3	Nearly unrecognizable
-chair / bench	~0.4	100~200	Visual ambiguity
+---
+
+#### ⚠️ Underperforming Classes
+
+| Class           | mAP@0.5 | Samples | Notes                   |
+|----------------|---------|---------|--------------------------|
+| wheelchair     | 0.037   | 3       | Too few samples          |
+| cat / dog      | 0.0~0.42| 1~4     | Rarely present           |
+| parking_meter  | 0.0     | 3       | Nearly unrecognizable    |
+| chair / bench  | ~0.4    | 100~200 | Visual ambiguity         |
 
 Low-performing classes can be improved by data augmentation or considered for class merging or removal depending on deployment goals.
-## Optimization
 
-We optimize YOLO models on a Raspberry Pi 5 platform using **ONNX** and **NCNN** to meet latency requirements.
 
 ### 1. ONNX Optimization
 
