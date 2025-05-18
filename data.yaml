@@ -1,0 +1,12 @@
+
+train: /content/yolodata/images/train
+val: /content/yolodata/images/val
+
+nc: 29
+names: [
+  'wheelchair', 'truck', 'tree_trunk', 'traffic_sign', 'traffic_light',
+  'table', 'stroller', 'stop', 'scooter', 'potted_plant', 'pole', 'person',
+  'parking_meter', 'movable_signage', 'motorcycle', 'kiosk', 'fire_hydrant',
+  'dog', 'chair', 'cat', 'carrier', 'car', 'bus', 'bollard', 'bicycle',
+  'bench', 'barricade','traffic_light_controller','power_controller'
+]
