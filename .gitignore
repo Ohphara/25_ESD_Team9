@@ -1,0 +1,10 @@
+**/.git/
+**/source/**.git/
+build/
+*.o
+*.so
+*.a
+# ignore binary builds and SDK archives
+1.3.290.0/
+*.tar.xz
+pytorch/
