@@ -1,0 +1,46 @@
+description: Ultralytics YOLO11n model trained on /content/yolodata/data.yaml
+author: Ultralytics
+date: '2025-06-04T15:24:13.326809'
+version: 8.3.146
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+batch: 1
+imgsz:
+- 480
+- 480
+names:
+  0: wheelchair
+  1: truck
+  2: tree_trunk
+  3: traffic_sign
+  4: traffic_light
+  5: table
+  6: stroller
+  7: stop
+  8: scooter
+  9: potted_plant
+  10: pole
+  11: person
+  12: parking_meter
+  13: movable_signage
+  14: motorcycle
+  15: kiosk
+  16: fire_hydrant
+  17: dog
+  18: chair
+  19: cat
+  20: carrier
+  21: car
+  22: bus
+  23: bollard
+  24: bicycle
+  25: bench
+  26: barricade
+  27: traffic_light_controller
+  28: power_controller
+args:
+  batch: 1
+  half: false
+channels: 3

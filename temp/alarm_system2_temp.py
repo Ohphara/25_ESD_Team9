@@ -1,0 +1,136 @@
+from picamera2 import Picamera2
+import cv2
+import time
+import numpy as np
+from ultralytics import YOLO
+
+SPEED_THRESHOLDS = {
+    1: 5.0,   # truck
+    21: 5.0,  # car
+    24: 2.0,  # bicycle
+    22: 4.0,  # bus
+    14: 3.0   # motorcycle
+}
+ALERT_CLASSES = SPEED_THRESHOLDS.keys()
+FRAME_SIZE = 480
+prev_info = {}
+
+# Picamera2 초기화
+picam2 = Picamera2()
+config = picam2.create_preview_configuration(main={"size": (FRAME_SIZE, FRAME_SIZE), "format": "RGB888"})
+picam2.configure(config)
+picam2.start()
+
+model = YOLO("/home/pi/Desktop/project/yolo11n_480_best2_ncnn_model")
+prev_time = time.time()
+
+# 중심 위험 영역 설정
+top_y = int(FRAME_SIZE * 0.55)
+bottom_y = int(FRAME_SIZE * 0.95)
+center_x = FRAME_SIZE // 2
+top_width = 100
+bottom_width = 220
+zone_pts = np.array([
+    (center_x - top_width // 2, top_y),
+    (center_x + top_width // 2, top_y),
+    (center_x + bottom_width // 2, bottom_y),
+    (center_x - bottom_width // 2, bottom_y),
+], dtype=np.int32)
+
+prev_gray = None
+affine_matrix = None
+
+while True:
+    # Picamera2에서 프레임 획득
+    frame = picam2.capture_array()
+    frame_resized = cv2.resize(frame, (FRAME_SIZE, FRAME_SIZE))
+    gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
+
+    # 특징점 기반 회전/이동 보정 행렬 추정
+    if prev_gray is not None:
+        p0 = cv2.goodFeaturesToTrack(prev_gray, maxCorners=80, qualityLevel=0.3, minDistance=7)
+        if p0 is not None:
+            p1, st, err = cv2.calcOpticalFlowPyrLK(prev_gray, gray, p0, None)
+            if p1 is not None:
+                good_p0 = p0[st == 1]
+                good_p1 = p1[st == 1]
+                if len(good_p0) >= 6:
+                    affine_matrix, _ = cv2.estimateAffinePartial2D(good_p0, good_p1)
+    prev_gray = gray.copy()
+
+    # 객체 추적
+    results = model.track(source=frame_resized, persist=True, stream=False, tracker="bytetrack.yaml")
+    t_now = time.time()
+
+    # 중심 위험 영역 시각화
+    cv2.polylines(frame_resized, [zone_pts], isClosed=True, color=(0, 255, 0), thickness=1)
+
+    if len(results) > 0:
+        r = results[0]
+        for box in r.boxes:
+            if not hasattr(box, 'id') or box.id is None:
+                continue
+
+            obj_id = int(box.id.item())
+            cls = int(box.cls.item())
+            if cls not in model.names or cls not in ALERT_CLASSES:
+                continue
+
+            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            bottom_center = (cx, y2)
+
+            if obj_id in prev_info:
+                px, py, t_prev, prev_speed, prev_warn_candidate = prev_info[obj_id]
+                dt = t_now - t_prev
+
+                if affine_matrix is not None:
+                    prev_pt = np.array([[px, py]], dtype=np.float32)
+                    corrected_pt = cv2.transform(prev_pt[None, :, :], affine_matrix)[0][0]
+                    dx, dy = cx - corrected_pt[0], cy - corrected_pt[1]
+                else:
+                    dx, dy = cx - px, cy - py
+
+                dist = np.hypot(dx, dy)
+                if dt < 0.02 or dist > 100:
+                    speed = 0
+                else:
+                    speed = dist / dt
+                    if abs(speed - prev_speed) > 30:
+                        speed = prev_speed
+
+                current_warn_candidate = False  # 기본값
+                in_zone = cv2.pointPolygonTest(zone_pts, bottom_center, False) >= 0
+                speed_thresh = SPEED_THRESHOLDS.get(cls, 1.5)
+                current_warn_candidate = in_zone and speed > speed_thresh
+                warn = prev_warn_candidate and current_warn_candidate
+
+            else:
+                speed = 0
+                current_warn_candidate = False
+                warn = False
+
+            prev_info[obj_id] = (cx, cy, t_now, speed, current_warn_candidate)
+
+            # 시각화
+            label = f"{model.names[cls]} {speed:.1f}px/s"
+            color = (0, 0, 255) if warn else (255, 255, 0)
+            if warn:
+                label += " ⚠"
+            cv2.rectangle(frame_resized, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(frame_resized, label, (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+    # FPS 표시
+    curr_time = time.time()
+    fps = 1.0 / (curr_time - prev_time + 1e-6)
+    prev_time = curr_time
+    cv2.putText(frame_resized, f"FPS: {fps:.2f}", (10, 25),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+    cv2.imshow("YOLOv8 + ByteTrack Alert System", frame_resized)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+picam2.stop()
+cv2.destroyAllWindows()
