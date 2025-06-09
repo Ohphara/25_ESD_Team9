@@ -2,9 +2,11 @@
 #include "yolo11n.h"
 #include "./bytetrack/include/BYTETracker.h"
 #include <unordered_map>
-#include <chrono>
-#include <cmath>
+#include <vector>
 #include <string>
+#include <cstdio>
+#include <cmath>
+#include <iostream>
 
 using namespace std;
 static const char* class_names[] = {
@@ -67,7 +69,9 @@ bool should_alert(int obj_id, float risk_score, double t_now) {
     return false;
 }
 
-void draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects) {
+void draw_objects(cv::Mat& image, const std::vector<Object>& objects,
+                 const std::vector<cv::Point>& zone_pts, const cv::Point& zone_center)
+{
     static cv::Scalar colors[] = {
         cv::Scalar(244, 67, 54), cv::Scalar(233, 30, 99), cv::Scalar(156, 39, 176), cv::Scalar(103, 58, 183),
         cv::Scalar(63, 81, 181), cv::Scalar(33, 150, 243), cv::Scalar(3, 169, 244), cv::Scalar(0, 188, 212),
@@ -75,7 +79,9 @@ void draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects) {
         cv::Scalar(255, 235, 59), cv::Scalar(255, 193, 7), cv::Scalar(255, 152, 0), cv::Scalar(255, 87, 34),
         cv::Scalar(121, 85, 72), cv::Scalar(158, 158, 158), cv::Scalar(96, 125, 139)
     };
-    cv::Mat image = bgr.clone();
+    // 사다리꼴 zone 먼저 그리기
+    cv::polylines(image, zone_pts, true, cv::Scalar(0,255,0), 1);
+
     for (size_t i = 0; i < objects.size(); i++) {
         const Object& obj = objects[i];
         const cv::Scalar& color = colors[i % 19];
@@ -90,24 +96,42 @@ void draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects) {
         if (x + label_size.width > image.cols) x = image.cols - label_size.width;
         cv::rectangle(image, cv::Rect(cv::Point(x, y), cv::Size(label_size.width, label_size.height + baseLine)), cv::Scalar(255,255,255), -1);
         cv::putText(image, text, cv::Point(x, y + label_size.height), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0,0,0));
+
+        // bbox 하단 중앙 -> zone_center로 노란선
+        int x_center = int(obj.rect.x + obj.rect.width/2);
+        int y_bottom = int(obj.rect.y + obj.rect.height);
+        cv::line(image, cv::Point(x_center, y_bottom), zone_center, cv::Scalar(0,255,255), 1);
     }
-    cv::imshow("yolo11n", image);
 }
 
-int main() {
-    // int cam_index = 8; // 카메라 번호
-    // cv::VideoCapture cap(cam_index);
-    // if (!cap.isOpened()) {
-    //     fprintf(stderr, "No camera\n");
-    //     return -1;
-    // }
-	cv::VideoCapture cap("/home/pi/Desktop/FinalProject/20250603_160952.mp4");
+int main(int argc, char** argv) {
+    cv::VideoCapture cap;
+    // 기본값: 웹캠 8번
+    if (argc > 1) {
+        std::string arg1 = argv[1];
+        if (arg1.rfind("cam:", 0) == 0) {
+            int cam_idx = std::stoi(arg1.substr(4));
+            cap.open(cam_idx);
+        } else {
+            // 동영상 파일 경로
+            cap.open(arg1);
+        }
+    } else {
+        cap.open(8); // default cam
+    }
+
+    if (!cap.isOpened()) {
+        fprintf(stderr, "No camera or video file\n");
+        return -1;
+    }
+
     int frame_id = 0;
     int frame_rate = 30;
     BYTETracker tracker(frame_rate, 30);
 
     cv::Mat frame;
-    double total_elapsed_ms = 0.0; // 전체 처리 시간 누적
+    double total_elapsed_ms = 0.0;
+    int frame_count = 0;
 
     // 사다리꼴 구역 설정
     int top_y = int(FRAME_SIZE * 0.55);
@@ -132,6 +156,9 @@ int main() {
 
         // 트래킹
         std::vector<STrack> tracks = tracker.update(objects);
+
+        // === draw_objects에서 모든 시각화: bbox, 라벨, 사다리꼴, 선 ===
+        draw_objects(frame, objects, zone_pts, zone_center);
 
         // 경보 로직
         double t_now = (double)cv::getTickCount() / cv::getTickFrequency();
@@ -184,19 +211,25 @@ int main() {
             }
         }
 
-        // int64 t1 = cv::getTickCount();
-        // double elapsed_ms = (t1 - t0) * 1000.0 / cv::getTickFrequency();
-        // total_elapsed_ms += elapsed_ms;
-        // double fps = 1000.0 / elapsed_ms;
-        // printf("[frame %d] time = %.2f ms, FPS = %.2f, Tracks = %zu\n\n", frame_id, elapsed_ms, fps, tracks.size());
-        frame_id++;
+        // === 프레임 표시 ===
+        cv::imshow("yolo11n", frame);
 
-        // cv::polylines(frame, zone_pts, true, cv::Scalar(0,255,0), 1);
-        // cv::imshow("tracking", frame);
+        int64 t1 = cv::getTickCount();
+        double elapsed_ms = (t1 - t0) * 1000.0 / cv::getTickFrequency();
+        total_elapsed_ms += elapsed_ms;
+        frame_count++;
+
+        if (!cap.isOpened() || frame.empty())
+            break;
+
         if (cv::waitKey(1) == 27) break; // ESC
+        frame_id++;
     }
-    // if (frame_id > 0)
-    //     printf("=== Total average FPS: %.2f ===\n", frame_id * 1000.0 / total_elapsed_ms);
+
+    if (frame_count > 0) {
+        double avg_fps = 1000.0 / (total_elapsed_ms / frame_count);
+        printf("Average FPS: %.2f\n", avg_fps);
+    }
 
     return 0;
 }

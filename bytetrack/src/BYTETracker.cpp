@@ -18,11 +18,6 @@ BYTETracker::~BYTETracker()
 
 vector<STrack> BYTETracker::update(const vector<Object>& objects)
 {
-	printf("[TRACKER] objects.size(): %zu\n", objects.size());
-	for (const auto& obj : objects) {
-		printf("[TRACKER] Input: x=%.1f y=%.1f w=%.1f h=%.1f prob=%.2f label=%d\n",
-			obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height, obj.prob, obj.label);
-	}
 
 	////////////////// Step 1: Get detections //////////////////
 	this->frame_id++;

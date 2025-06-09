@@ -16,10 +16,22 @@ def speak_tts_worker(q):
         engine.say(text)
         engine.runAndWait()
 
+def select_input():
+    sel = input("카메라(0)/동영상(1) 중 선택하세요: ").strip()
+    if sel == "1":
+        video_path = "/home/pi/Desktop/FinalProject/20250603_160952.mp4"
+        return [video_path]
+    else:
+        cam_idx = input("카메라 인덱스(기본 8): ").strip()
+        if cam_idx == "":
+            cam_idx = "8"
+        return [f"cam:{cam_idx}"]
+
 def main():
-    # subprocess로 yolo11n 실행
-    proc = subprocess.Popen(['./yolo11n'], stdout=subprocess.PIPE, text=True, bufsize=1)
-    
+    # 입력 선택 (카메라 or 동영상)
+    args = select_input()
+    proc = subprocess.Popen(['./yolo11n'] + args, stdout=subprocess.PIPE, text=True, bufsize=1)
+
     tts_queue = queue.Queue()
     tts_thread = threading.Thread(target=speak_tts_worker, args=(tts_queue,), daemon=True)
     tts_thread.start()
@@ -33,15 +45,14 @@ def main():
             if line.startswith("ALERT:"):
                 message = line[6:].strip()
                 now = time.time()
-                # 쿨다운 체크
                 if message not in last_alert_time or (now - last_alert_time[message]) > COOLDOWN_SEC:
-                    print(f"[ALERT] {message}")  # ★ 터미널에도 출력!
+                    print(f"[ALERT] {message}")
                     tts_queue.put(message)
                     last_alert_time[message] = now
                 else:
                     print(f"[INFO] Skip duplicate alert: {message}")
-            else:
-                print(line)  # ★ 일반 출력도 터미널로 pass-through
+            elif line != "":
+                print(line)
     except KeyboardInterrupt:
         print("종료 요청됨 (Ctrl+C)")
     finally:
