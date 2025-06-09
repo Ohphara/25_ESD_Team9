@@ -1,0 +1,3 @@
+/home/pi/Desktop/FinalProject/build/CMakeFiles/yolo11n.dir
+/home/pi/Desktop/FinalProject/build/CMakeFiles/edit_cache.dir
+/home/pi/Desktop/FinalProject/build/CMakeFiles/rebuild_cache.dir
