@@ -1,39 +1,79 @@
 #include <opencv2/opencv.hpp>
 #include "yolo11n.h"
 #include "./bytetrack/include/BYTETracker.h"
+#include <unordered_map>
+#include <chrono>
+#include <cmath>
+#include <string>
+
+using namespace std;
+static const char* class_names[] = {
+	"person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
+	"fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
+	"elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
+	"skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
+	"tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+	"sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
+	"potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone",
+	"microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
+	"hair drier", "toothbrush"
+};
+// ----------- 경보(Warning) 파라미터 세팅 -----------
+const std::unordered_map<int, float> SPEED_THRESHOLDS = {
+    {1, 5.0},  // bicycle
+    {21, 5.0}, // elephant (임의)
+    {24, 2.0}, // backpack (임의)
+    {22, 4.0}, // bear (임의)
+    {14, 3.0}, // bird (임의)
+};
+const float DEFAULT_SPEED_THRESH = 1.5;
+const int FRAME_SIZE = 480;
+const float TOP_DIST_M = 4.0;
+const float BOTTOM_DIST_M = 2.5;
+
+struct PrevInfo {
+    int cx, cy;
+    double t_prev;
+    float speed;
+};
+
+std::unordered_map<int, PrevInfo> prev_info;      // obj_id -> PrevInfo
+std::unordered_map<int, double> alert_cooldowns;  // obj_id -> last_alert_time
+
+// 거리 추정 (y 좌표 기반 선형보간)
+float estimate_distance_from_y(int y, int top_y, int bottom_y) {
+    return ((float)(y - top_y) / (float)(bottom_y - top_y)) * (BOTTOM_DIST_M - TOP_DIST_M) + TOP_DIST_M;
+}
+
+// 위험도 점수 계산 (심플 버전)
+float compute_risk_score(float speed, float distance_m, int class_id, float approach_angle) {
+    float dist_score = (approach_angle < 0.5) ? std::max(0.0f, 5.0f - distance_m) : ((distance_m < 2.5f) ? 2.0f : 0.0f);
+    float speed_score = std::min(speed / 2.0f, 5.0f);
+    float obj_score = 1.0f;
+    if (class_id == 2 || class_id == 5 || class_id == 7) obj_score = 3.0f;  // car, bus, truck
+    if (class_id == 1 || class_id == 3) obj_score = 2.0f; // bicycle, motorcycle
+    return dist_score + speed_score + obj_score;
+}
+
+// 경보를 낼지 판단
+bool should_alert(int obj_id, float risk_score, double t_now) {
+    if (risk_score >= 10) return true;
+    double cooldown = (risk_score >= 6) ? 2.0 : 5.0;
+    double last_alert = alert_cooldowns[obj_id];
+    if (t_now - last_alert > cooldown) {
+        alert_cooldowns[obj_id] = t_now;
+        return true;
+    }
+    return false;
+}
 
 void draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects) {
-    static const char* class_names[] = {
-        "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
-        "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
-        "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
-        "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
-        "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
-        "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
-        "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone",
-        "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
-        "hair drier", "toothbrush"
-    };
     static cv::Scalar colors[] = {
-        cv::Scalar(244, 67, 54),
-        cv::Scalar(233, 30, 99),
-        cv::Scalar(156, 39, 176),
-        cv::Scalar(103, 58, 183),
-        cv::Scalar(63, 81, 181),
-        cv::Scalar(33, 150, 243),
-        cv::Scalar(3, 169, 244),
-        cv::Scalar(0, 188, 212),
-        cv::Scalar(0, 150, 136),
-        cv::Scalar(76, 175, 80),
-        cv::Scalar(139, 195, 74),
-        cv::Scalar(205, 220, 57),
-        cv::Scalar(255, 235, 59),
-        cv::Scalar(255, 193, 7),
-        cv::Scalar(255, 152, 0),
-        cv::Scalar(255, 87, 34),
-        cv::Scalar(121, 85, 72),
-        cv::Scalar(158, 158, 158),
-        cv::Scalar(96, 125, 139)
+        cv::Scalar(244, 67, 54), cv::Scalar(233, 30, 99), cv::Scalar(156, 39, 176), cv::Scalar(103, 58, 183),
+        cv::Scalar(63, 81, 181), cv::Scalar(33, 150, 243), cv::Scalar(3, 169, 244), cv::Scalar(0, 188, 212),
+        cv::Scalar(0, 150, 136), cv::Scalar(76, 175, 80), cv::Scalar(139, 195, 74), cv::Scalar(205, 220, 57),
+        cv::Scalar(255, 235, 59), cv::Scalar(255, 193, 7), cv::Scalar(255, 152, 0), cv::Scalar(255, 87, 34),
+        cv::Scalar(121, 85, 72), cv::Scalar(158, 158, 158), cv::Scalar(96, 125, 139)
     };
     cv::Mat image = bgr.clone();
     for (size_t i = 0; i < objects.size(); i++) {
@@ -55,12 +95,13 @@ void draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects) {
 }
 
 int main() {
-    int cam_index = 8; // 카메라 번호
-    cv::VideoCapture cap(cam_index);
-    if (!cap.isOpened()) {
-        fprintf(stderr, "No camera\n");
-        return -1;
-    }
+    // int cam_index = 8; // 카메라 번호
+    // cv::VideoCapture cap(cam_index);
+    // if (!cap.isOpened()) {
+    //     fprintf(stderr, "No camera\n");
+    //     return -1;
+    // }
+	cv::VideoCapture cap("/home/pi/Desktop/FinalProject/20250603_160952.mp4");
     int frame_id = 0;
     int frame_rate = 30;
     BYTETracker tracker(frame_rate, 30);
@@ -68,63 +109,94 @@ int main() {
     cv::Mat frame;
     double total_elapsed_ms = 0.0; // 전체 처리 시간 누적
 
+    // 사다리꼴 구역 설정
+    int top_y = int(FRAME_SIZE * 0.55);
+    int bottom_y = int(FRAME_SIZE * 0.95);
+    int center_x = FRAME_SIZE / 2;
+    int top_width = 100, bottom_width = 220;
+    std::vector<cv::Point> zone_pts = {
+        cv::Point(center_x - top_width/2, top_y),
+        cv::Point(center_x + top_width/2, top_y),
+        cv::Point(center_x + bottom_width/2, bottom_y),
+        cv::Point(center_x - bottom_width/2, bottom_y)
+    };
+    cv::Point zone_center(center_x, bottom_y);
+
     while (cap.read(frame)) {
         int64 t0 = cv::getTickCount();
 
+        cv::resize(frame, frame, cv::Size(FRAME_SIZE, FRAME_SIZE)); // 강제 resize
+
         std::vector<Object> objects;
         detect_yolo11(frame, objects);
-		for (const auto& obj : objects) {
-			printf("[DET] label:%d prob:%.2f x:%.1f y:%.1f w:%.1f h:%.1f\n",
-				obj.label, obj.prob, obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height);
-		}
-        // ---- Tracking 결과 로그 및 화면 표시 ----
-        std::vector<STrack> output_stracks = tracker.update(objects);
-        printf("=== Tracking Results [Frame %d] ===\n", frame_id);
-        for (const auto& track : output_stracks) {
+
+        // 트래킹
+        std::vector<STrack> tracks = tracker.update(objects);
+
+        // 경보 로직
+        double t_now = (double)cv::getTickCount() / cv::getTickFrequency();
+        for (const auto& track : tracks) {
             const std::vector<float>& tlwh = track.tlwh;
             int track_id = track.track_id;
 
-            // (클래스 ID 매칭은 상황에 맞게 추가)
+            // bbox center 계산
+            int x1 = int(tlwh[0]), y1 = int(tlwh[1]);
+            int x2 = x1 + int(tlwh[2]), y2 = y1 + int(tlwh[3]);
+            int cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
             int class_id = -1;
-            if (!objects.empty()) {
-                class_id = objects[0].label; // 예시: 첫 detection의 클래스
+            float prob = 0.0f;
+            // detection 매칭
+            for (const auto& obj : objects) {
+                if (abs(cx - (obj.rect.x + obj.rect.width/2)) < 10 && abs(cy - (obj.rect.y + obj.rect.height/2)) < 10) {
+                    class_id = obj.label;
+                    prob = obj.prob;
+                    break;
+                }
             }
-            printf("ID:%d | BBOX:[%.1f, %.1f, %.1f, %.1f] | Class:%d\n",
-                track_id, tlwh[0], tlwh[1], tlwh[2], tlwh[3], class_id);
+            if (class_id == -1) continue;
 
-            // 화면 표시
-            cv::rectangle(frame, cv::Rect(tlwh[0], tlwh[1], tlwh[2], tlwh[3]), cv::Scalar(0,255,0), 2);
-            char text[64];
-            snprintf(text, sizeof(text), "id:%d", track_id);
-            cv::putText(frame, text, cv::Point(tlwh[0], tlwh[1]-5),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0,0,255), 2);
+            float speed = 0, approach_angle = 0;
+            if (prev_info.count(track_id)) {
+                auto& p = prev_info[track_id];
+                float dt = t_now - p.t_prev;
+                float dx = cx - p.cx, dy = cy - p.cy;
+                float dist = sqrt(dx*dx + dy*dy);
+                speed = dt > 0.01 ? dist / dt : 0;
+                if (fabs(speed - p.speed) > 30) speed = p.speed;
+                approach_angle = fabs(dx) / (fabs(dy) + 1e-6);
+            }
+            prev_info[track_id] = {cx, cy, t_now, speed};
+
+            // 아래 중앙점 기준 거리 추정
+            float distance_m = estimate_distance_from_y(y2, top_y, bottom_y);
+
+            // 사다리꼴 구역 안/밖 판정
+            int in_zone = cv::pointPolygonTest(zone_pts, cv::Point(cx, y2), false) >= 0;
+            float speed_thresh = SPEED_THRESHOLDS.count(class_id) ? SPEED_THRESHOLDS.at(class_id) : DEFAULT_SPEED_THRESH;
+
+            if (in_zone && speed > speed_thresh) {
+                float risk_score = compute_risk_score(speed, distance_m, class_id, approach_angle);
+                if (should_alert(track_id, risk_score, t_now)) {
+                    std::string class_name = (class_id >= 0 && class_id < 80) ? class_names[class_id] : "object";
+                    printf("ALERT: %s is approaching.\n", class_name.c_str());
+                    fflush(stdout);
+                }
+            }
         }
 
-        // ---- Detection 결과 로그 ----
-        printf("--- Detection Results [Frame %d] ---\n", frame_id);
-        for (const auto& obj : objects) {
-            printf("Class:%d | Prob:%.2f | BBOX:[%.1f, %.1f, %.1f, %.1f]\n",
-                obj.label, obj.prob,
-                obj.rect.x, obj.rect.y, obj.rect.x + obj.rect.width, obj.rect.y + obj.rect.height);
-        }
-
-        int64 t1 = cv::getTickCount();
-        double elapsed_ms = (t1 - t0) * 1000.0 / cv::getTickFrequency();
-        total_elapsed_ms += elapsed_ms;
-        double fps = 1000.0 / elapsed_ms;
-
-        printf("[frame %d] time = %.2f ms, FPS = %.2f, Tracks = %zu\n\n", 
-            frame_id, elapsed_ms, fps, output_stracks.size());
-
+        // int64 t1 = cv::getTickCount();
+        // double elapsed_ms = (t1 - t0) * 1000.0 / cv::getTickFrequency();
+        // total_elapsed_ms += elapsed_ms;
+        // double fps = 1000.0 / elapsed_ms;
+        // printf("[frame %d] time = %.2f ms, FPS = %.2f, Tracks = %zu\n\n", frame_id, elapsed_ms, fps, tracks.size());
         frame_id++;
-        fflush(stdout);
 
-        cv::imshow("tracking", frame);
+        // cv::polylines(frame, zone_pts, true, cv::Scalar(0,255,0), 1);
+        // cv::imshow("tracking", frame);
         if (cv::waitKey(1) == 27) break; // ESC
     }
+    // if (frame_id > 0)
+    //     printf("=== Total average FPS: %.2f ===\n", frame_id * 1000.0 / total_elapsed_ms);
 
-    if (frame_id > 0) {
-        printf("=== Total average FPS: %.2f ===\n", frame_id * 1000.0 / total_elapsed_ms);
-    }
     return 0;
 }

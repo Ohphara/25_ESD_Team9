@@ -3,7 +3,6 @@ import subprocess
 import threading
 import time
 import queue
-import sys
 
 def speak_tts_worker(q):
     engine = pyttsx3.init()
@@ -26,7 +25,7 @@ def main():
     tts_thread.start()
 
     last_alert_time = {}
-    COOLDOWN_SEC = 3.0   # 같은 메시지 반복 알림 쿨다운 (초)
+    COOLDOWN_SEC = 3.0
 
     try:
         for line in proc.stdout:
@@ -34,16 +33,19 @@ def main():
             if line.startswith("ALERT:"):
                 message = line[6:].strip()
                 now = time.time()
-                # 같은 메시지 쿨타임 관리
+                # 쿨다운 체크
                 if message not in last_alert_time or (now - last_alert_time[message]) > COOLDOWN_SEC:
+                    print(f"[ALERT] {message}")  # ★ 터미널에도 출력!
                     tts_queue.put(message)
                     last_alert_time[message] = now
                 else:
                     print(f"[INFO] Skip duplicate alert: {message}")
+            else:
+                print(line)  # ★ 일반 출력도 터미널로 pass-through
     except KeyboardInterrupt:
         print("종료 요청됨 (Ctrl+C)")
     finally:
-        tts_queue.put(None)  # TTS 쓰레드 안전종료
+        tts_queue.put(None)
         tts_thread.join()
         proc.terminate()
         proc.wait()
